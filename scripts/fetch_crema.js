@@ -47,20 +47,16 @@ async function getAccessToken() {
   return data.access_token;
 }
 
-// 2단계: 리뷰 목록 수집 (최근 7일)
+// 2단계: 리뷰 목록 수집 (최근 30일)
 async function fetchReviews(token) {
   console.log('📥 크리마 리뷰 수집 중...');
   
-  const since = new Date();
-  since.setDate(since.getDate() - 7);
-  const sinceStr = since.toISOString();
-
   let allReviews = [];
   let page = 1;
   let hasMore = true;
 
   while (hasMore) {
-    const path = `/v1/reviews?access_token=${token}&per_page=100&page=${page}&sort=created_at_desc&since=${encodeURIComponent(sinceStr)}`;
+    const path = `/v1/reviews?access_token=${token}&per_page=100&page=${page}&sort=created_at_desc`;
     
     const data = await request({
       hostname: 'api.cre.ma',
