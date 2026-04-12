@@ -37,10 +37,9 @@ async function getAccessToken() {
   return res.body.access_token;
 }
 
-// 상품 목록 전체 가져오기 (product_code → product_name 매핑)
 async function fetchProductMap(token) {
   console.log('📦 상품 목록 수집 중...');
-  const productMap = {}; // product_code → name
+  const productMap = {};
   let page = 1;
   let hasMore = true;
 
@@ -68,27 +67,23 @@ async function fetchProductMap(token) {
   return productMap;
 }
 
-async function fetchReviews(token) {
-  console.log('📥 크리마 리뷰 수집 중...');
-  const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - 45);
-  const startStr = start.toISOString().slice(0, 10);
-  const endStr = end.toISOString().slice(0, 10);
-  console.log(`  수집 기간: ${startStr} ~ ${endStr}`);
+async function fetchAllReviews(token) {
+  // ── 전체 리뷰 수집 (날짜 제한 없음, 페이지 무제한) ──
+  console.log('📥 크리마 전체 리뷰 수집 중... (날짜 제한 없음)');
 
   let allReviews = [];
   let page = 1;
   let hasMore = true;
 
-  while (hasMore && page <= 30) {
+  while (hasMore) {
     const res = await request({
       hostname: 'api.cre.ma',
-      path: `/v1/reviews?access_token=${token}&limit=100&page=${page}&date_order_desc=1&start_date=${startStr}&end_date=${endStr}`,
+      path: `/v1/reviews?access_token=${token}&limit=100&page=${page}&date_order_desc=1`,
       method: 'GET',
       headers: { 'Accept': 'application/json' }
     });
     const data = res.body;
+
     if (!Array.isArray(data) || data.length === 0) {
       hasMore = false;
     } else {
@@ -96,6 +91,9 @@ async function fetchReviews(token) {
       console.log(`  페이지 ${page}: ${data.length}개 (누적: ${allReviews.length}개)`);
       if (data.length < 100) hasMore = false;
       page++;
+
+      // API 부하 방지: 페이지마다 0.3초 대기
+      await new Promise(r => setTimeout(r, 300));
     }
   }
   console.log(`✅ 총 ${allReviews.length}개 리뷰 수집 완료`);
@@ -122,12 +120,14 @@ function cleanMessage(message) {
 
 function getProductCategory(name) {
   if (!name) return '기타';
-  if (name.match(/NMN Daily Routine|스킨 부스터|Daily Regenerator|NMN 스킨/)) return 'NMN';
-  if (name.match(/White repair|마스크|팩|지우개팩/)) return '마스크팩';
-  if (name.match(/에센셜|Essential/)) return '에센셜';
-  if (name.match(/어드밴스드|Advanced|SPF/)) return '어드밴스드';
-  if (name.match(/핸드크림|인앤아웃|손티에이징/)) return '핸드크림 세트';
-  if (name.match(/앰플|UV Healer/)) return '앰플';
+  const n = name.toLowerCase();
+  if (n.includes('healer')) return '앰플';
+  if (n.match(/kit|마스크팩|겔마스크|지우개팩/)) return '마스크팩';
+  if (n.match(/인앤아웃|손티에이징|어워즈/)) return '핸드크림 세트';
+  if (n.match(/essential|에센셜/)) return '에센셜 핸드크림';
+  if (n.match(/advanced|어드밴스드/)) return '어드밴스드 핸드크림';
+  if (n.match(/nmn daily routine|스킨 부스터|스킨부스터|daily regenerator|nmn 스킨|regenerator/)) return 'NMN';
+  if (n.match(/앰플/)) return '앰플';
   return '기타';
 }
 
@@ -171,7 +171,6 @@ function convertReview(r, productMap) {
   const isNeg = sentiment === '부정';
   const keywords = extractKeywords(text);
 
-  // product_code로 상품명 조회
   const productCode = String(r.product_code || '');
   const productId = String(r.product_id || '');
   const productName = productMap[productCode] || productMap[productId] || r.product_name || '';
@@ -201,18 +200,51 @@ function updateHTML(newReviews) {
   console.log('📝 HTML 파일 업데이트 중...');
   let html = fs.readFileSync('index.html', 'utf8');
 
-  const match = html.match(/const ALL_REVIEWS = (\[[\s\S]*?\]);/);
-  if (!match) throw new Error('ALL_REVIEWS를 찾을 수 없습니다.');
+  // ALL_REVIEWS 블록을 괄호 깊이로 정확하게 찾기
+  const startMarker = 'const ALL_REVIEWS = ';
+  const startIdx = html.indexOf(startMarker) + startMarker.length;
 
-  let existing = JSON.parse(match[1]);
-  const nonCRM = existing.filter(r => !r.id.startsWith('CRM'));
-  console.log(`  기존 비-크리마 리뷰: ${nonCRM.length}개`);
+  let depth = 0;
+  let inString = false;
+  let i = startIdx;
+  while (i < html.length) {
+    const c = html[i];
+    if (c === '\\' && inString) { i += 2; continue; }
+    if (c === '"') inString = !inString;
+    else if (!inString) {
+      if (c === '[') depth++;
+      else if (c === ']') { depth--; if (depth === 0) { i++; break; } }
+    }
+    i++;
+  }
+  const endIdx = i;
+
+  // 기존 데이터 파싱
+  const existingJson = html.slice(startIdx, endIdx);
+  let existing = [];
+  try {
+    existing = JSON.parse(existingJson);
+  } catch(e) {
+    console.warn('⚠️ 기존 데이터 파싱 실패, 새 데이터만 사용');
+  }
+
+  // 크리마 데이터 제외한 기존 수동 데이터 보존
+  const nonCRM = existing.filter(r => !String(r.id).startsWith('CRM'));
+  console.log(`  기존 수동 리뷰 보존: ${nonCRM.length}개`);
   console.log(`  새 크리마 리뷰: ${newReviews.length}개`);
 
-  const merged = [...newReviews, ...nonCRM].sort((a, b) => b.date.localeCompare(a.date));
+  // 병합 후 날짜순 정렬
+  const merged = [...newReviews, ...nonCRM]
+    .sort((a, b) => b.date.localeCompare(a.date));
   const totalCount = merged.length;
 
-  html = html.replace(/const ALL_REVIEWS = \[[\s\S]*?\];/, `const ALL_REVIEWS = ${JSON.stringify(merged)};`);
+  // JSON 직렬화 (개행 없이 안전하게)
+  const newJson = JSON.stringify(merged, null, 0);
+
+  // HTML에 삽입
+  html = html.slice(0, startIdx) + newJson + html.slice(endIdx);
+
+  // 뱃지 숫자 업데이트
   html = html.replace(/(<span class="nav-badge">)\d+(<\/span>)/g, `$1${totalCount}$2`);
   html = html.replace(/(<div class="nav-badge">)\d+(<\/div>)/g, `$1${totalCount}$2`);
 
@@ -222,14 +254,11 @@ function updateHTML(newReviews) {
 
 async function main() {
   try {
-    console.log('🚀 크리마 리뷰 자동 수집 시작\n');
+    console.log('🚀 크리마 전체 리뷰 수집 시작\n');
     const token = await getAccessToken();
 
-    // 상품 목록 먼저 가져오기
     const productMap = await fetchProductMap(token);
-
-    // 리뷰 수집
-    const raw = await fetchReviews(token);
+    const raw = await fetchAllReviews(token);
     const converted = raw.map(r => convertReview(r, productMap));
 
     // 분포 확인
