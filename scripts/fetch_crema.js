@@ -1,9 +1,9 @@
 const https = require('https');
 const fs = require('fs');
- 
+
 const APP_ID = process.env.CREMA_APP_ID;
 const SECRET = process.env.CREMA_SECRET;
- 
+
 function request(options, body = null) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
@@ -19,7 +19,7 @@ function request(options, body = null) {
     req.end();
   });
 }
- 
+
 // Link 헤더에서 next URL 파싱
 function parseLinkHeader(linkHeader) {
   if (!linkHeader) return {};
@@ -30,7 +30,7 @@ function parseLinkHeader(linkHeader) {
   });
   return links;
 }
- 
+
 // URL에서 path + query 추출
 function extractPath(url) {
   try {
@@ -40,7 +40,7 @@ function extractPath(url) {
     return url;
   }
 }
- 
+
 async function getAccessToken() {
   console.log('=== Access Token 발급 중... ===');
   const body = `grant_type=client_credentials&client_id=${APP_ID}&client_secret=${SECRET}`;
@@ -57,13 +57,13 @@ async function getAccessToken() {
   console.log('Access Token 발급 완료');
   return res.body.access_token;
 }
- 
+
 async function fetchProductMap(token) {
   console.log('\n=== 상품 목록 수집 중... ===');
   const productMap = {};
   let page = 1;
   let hasMore = true;
- 
+
   while (hasMore && page <= 100) {
     const res = await request({
       hostname: 'api.cre.ma',
@@ -71,10 +71,10 @@ async function fetchProductMap(token) {
       method: 'GET',
       headers: { 'Accept': 'application/json' }
     });
- 
+
     const data = res.body;
     let items = [];
- 
+
     // 응답 형식 자동 감지
     if (Array.isArray(data)) {
       items = data;
@@ -83,7 +83,7 @@ async function fetchProductMap(token) {
       items = data.products || data.data || data.items || [];
       if (!Array.isArray(items)) items = [];
     }
- 
+
     if (items.length === 0) {
       hasMore = false;
     } else {
@@ -92,7 +92,7 @@ async function fetchProductMap(token) {
         if (p.id) productMap[String(p.id)] = p.name;
       });
       console.log(`  상품 페이지 ${page}: ${items.length}개 (누적: ${Object.keys(productMap).length}개)`);
- 
+
       // Link 헤더 확인
       const links = parseLinkHeader(res.headers['link']);
       if (links.next) {
@@ -108,11 +108,11 @@ async function fetchProductMap(token) {
   console.log(`총 ${Object.keys(productMap).length}개 상품 매핑 완료\n`);
   return productMap;
 }
- 
+
 async function fetchAllReviews(token) {
   console.log('=== 크리마 전체 리뷰 수집 시작 ===');
   console.log('(Link 헤더 기반 페이지네이션 + 폴백)');
- 
+
   let allReviews = [];
   let page = 1;
   let hasMore = true;
@@ -120,11 +120,11 @@ async function fetchAllReviews(token) {
   let emptyPageCount = 0;
   const MAX_EMPTY = 3; // 연속 빈 페이지 3번이면 중단
   const MAX_PAGES = 200; // 안전장치: 최대 200페이지
- 
+
   while (hasMore && page <= MAX_PAGES) {
     // 첫 요청이거나 Link 헤더가 없으면 직접 URL 구성
     const path = nextPath || `/v1/reviews?access_token=${token}&limit=100&page=${page}`;
- 
+
     let res;
     try {
       res = await request({
@@ -149,7 +149,7 @@ async function fetchAllReviews(token) {
         break;
       }
     }
- 
+
     // 디버깅: 첫 페이지 응답 구조 출력
     if (page === 1) {
       console.log(`  [디버그] 응답 상태: ${res.statusCode}`);
@@ -159,25 +159,25 @@ async function fetchAllReviews(token) {
         console.log(`  [디버그] 응답 키: ${Object.keys(res.body).join(', ')}`);
       }
     }
- 
+
     // 응답에서 리뷰 배열 추출
     let reviews = [];
     const data = res.body;
- 
+
     if (Array.isArray(data)) {
       reviews = data;
     } else if (data && typeof data === 'object') {
       // 객체 래핑: { reviews: [...] }, { data: [...] }, { items: [...] }
       reviews = data.reviews || data.data || data.items || [];
       if (!Array.isArray(reviews)) reviews = [];
- 
+
       // 전체 개수 정보가 있으면 출력
       const total = data.total || data.total_count || data.count;
       if (total && page === 1) {
         console.log(`  [정보] API 보고 전체 리뷰 수: ${total}개`);
       }
     }
- 
+
     if (reviews.length === 0) {
       emptyPageCount++;
       console.log(`  페이지 ${page}: 빈 응답 (연속 ${emptyPageCount}회)`);
@@ -192,15 +192,15 @@ async function fetchAllReviews(token) {
       }
       continue;
     }
- 
+
     emptyPageCount = 0; // 데이터 있으면 리셋
     allReviews = allReviews.concat(reviews);
- 
+
     // 100페이지마다 로그, 아니면 10페이지마다
     if (page % 10 === 0 || page <= 3) {
       console.log(`  페이지 ${page}: ${reviews.length}개 (누적: ${allReviews.length}개)`);
     }
- 
+
     // Link 헤더에서 다음 페이지 URL 확인
     const links = parseLinkHeader(res.headers['link']);
     if (links.next) {
@@ -221,19 +221,19 @@ async function fetchAllReviews(token) {
         nextPath = null;
       }
     }
- 
+
     // API 부하 방지
     await new Promise(r => setTimeout(r, 300));
   }
- 
+
   if (page > MAX_PAGES) {
     console.log(`  [경고] 최대 페이지(${MAX_PAGES}) 도달, 수집 중단`);
   }
- 
+
   console.log(`\n=== 총 ${allReviews.length}개 리뷰 수집 완료 ===\n`);
   return allReviews;
 }
- 
+
 function parseChannel(message) {
   if (!message) return '카페24';
   if (message.includes('스마트스토어에서 작성된 구매평')) return '스마트스토어';
@@ -241,7 +241,7 @@ function parseChannel(message) {
   if (message.includes('네이버 페이 구매평')) return '스마트스토어';
   return '카페24';
 }
- 
+
 function cleanMessage(message) {
   if (!message) return '';
   return message
@@ -251,7 +251,7 @@ function cleanMessage(message) {
     .replace(/\s*\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} 에 등록된 네이버 페이 구매평\)\s*$/, '')
     .trim();
 }
- 
+
 function getProductCategory(name) {
   if (!name) return '기타';
   const n = name.toLowerCase();
@@ -264,7 +264,7 @@ function getProductCategory(name) {
   if (n.match(/앰플/)) return '앰플';
   return '기타';
 }
- 
+
 function extractKeywords(text) {
   const map = {
     '흡수 빠름': ['흡수','스며','잔여감 없'],
@@ -287,7 +287,7 @@ function extractKeywords(text) {
   }
   return keywords;
 }
- 
+
 function getSentiment(text, score) {
   const neg = ['불만','별로','최악','실망','환불','불편','아쉽','나쁨'];
   const pos = ['좋아','최고','만족','추천','재구매','완벽','훌륭','감사','대박'];
@@ -295,7 +295,7 @@ function getSentiment(text, score) {
   if (pos.some(w => text.includes(w)) || score >= 4) return '긍정';
   return '혼합';
 }
- 
+
 function convertReview(r, productMap) {
   const rawText = r.message || '';
   const channel = parseChannel(rawText);
@@ -304,12 +304,12 @@ function convertReview(r, productMap) {
   const sentiment = getSentiment(text, score);
   const isNeg = sentiment === '부정';
   const keywords = extractKeywords(text);
- 
+
   const productCode = String(r.product_code || '');
   const productId = String(r.product_id || '');
   const productName = productMap[productCode] || productMap[productId] || r.product_name || '';
   const productCategory = getProductCategory(productName);
- 
+
   return {
     id: `CRM${r.id}`,
     date: r.created_at ? r.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -329,15 +329,15 @@ function convertReview(r, productMap) {
     product_category: productCategory
   };
 }
- 
+
 function updateHTML(newReviews) {
   console.log('=== HTML 파일 업데이트 중... ===');
   let html = fs.readFileSync('index.html', 'utf8');
- 
+
   // ALL_REVIEWS 블록을 괄호 깊이로 정확하게 찾기
   const startMarker = 'const ALL_REVIEWS = ';
   const startIdx = html.indexOf(startMarker) + startMarker.length;
- 
+
   let depth = 0;
   let inString = false;
   let i = startIdx;
@@ -352,7 +352,7 @@ function updateHTML(newReviews) {
     i++;
   }
   const endIdx = i;
- 
+
   // 기존 데이터 파싱
   const existingJson = html.slice(startIdx, endIdx);
   let existing = [];
@@ -361,61 +361,63 @@ function updateHTML(newReviews) {
   } catch(e) {
     console.warn('기존 데이터 파싱 실패, 새 데이터만 사용');
   }
- 
-  // 크리마 데이터 제외한 기존 수동 데이터 보존
-  const nonCRM = existing.filter(r => !String(r.id).startsWith('CRM'));
-  console.log(`  기존 수동 리뷰 보존: ${nonCRM.length}개`);
-  console.log(`  새 크리마 리뷰: ${newReviews.length}개`);
- 
-  // 병합 후 날짜순 정렬
-  const merged = [...newReviews, ...nonCRM]
+
+  // 기존 리뷰 보존 + 새 리뷰만 추가 (기존 CRM 리뷰 유지!)
+  const existingIds = new Set(existing.map(r => String(r.id)));
+  const brandNew = newReviews.filter(r => !existingIds.has(String(r.id)));
+  console.log(`  기존 전체 리뷰: ${existing.length}개`);
+  console.log(`  API 수집: ${newReviews.length}개`);
+  console.log(`  이 중 신규: ${brandNew.length}개 (기존에 없는 것만 추가)`);
+
+  // 기존 전체 + 신규만 추가, 날짜순 정렬
+  const merged = [...existing, ...brandNew]
     .sort((a, b) => b.date.localeCompare(a.date));
   const totalCount = merged.length;
- 
+
   // JSON 직렬화 (개행 없이 안전하게)
   const newJson = JSON.stringify(merged, null, 0);
- 
+
   // HTML에 삽입
   html = html.slice(0, startIdx) + newJson + html.slice(endIdx);
- 
+
   // 뱃지 숫자 업데이트
   html = html.replace(/(<span class="nav-badge">)\d+(<\/span>)/g, `$1${totalCount}$2`);
   html = html.replace(/(<div class="nav-badge">)\d+(<\/div>)/g, `$1${totalCount}$2`);
- 
+
   fs.writeFileSync('index.html', html, 'utf8');
   console.log(`\n=== 총 ${totalCount}개로 업데이트 완료 ===`);
 }
- 
+
 async function main() {
   try {
     console.log('========================================');
     console.log('  크리마 전체 리뷰 수집 시작');
     console.log('========================================\n');
- 
+
     if (!APP_ID || !SECRET) {
       throw new Error('CREMA_APP_ID 또는 CREMA_SECRET 환경변수가 설정되지 않았습니다');
     }
- 
+
     const token = await getAccessToken();
     const productMap = await fetchProductMap(token);
     const raw = await fetchAllReviews(token);
- 
+
     if (raw.length === 0) {
       console.log('[경고] 수집된 리뷰가 0개입니다. API 응답을 확인하세요.');
       return;
     }
- 
+
     const converted = raw.map(r => convertReview(r, productMap));
- 
+
     // 분포 확인
     const chCount = {};
     converted.forEach(r => { chCount[r.channel] = (chCount[r.channel] || 0) + 1; });
     console.log('채널 분포:', JSON.stringify(chCount));
- 
+
     const catCount = {};
     converted.forEach(r => { catCount[r.product_category] = (catCount[r.product_category] || 0) + 1; });
     console.log('제품 분포:', JSON.stringify(catCount));
- 
+
     updateHTML(converted);
     console.log('\n========================================');
     console.log('  완료!');
@@ -426,5 +428,5 @@ async function main() {
     process.exit(1);
   }
 }
- 
+
 main();
