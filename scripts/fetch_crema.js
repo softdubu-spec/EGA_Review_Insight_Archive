@@ -37,6 +37,37 @@ async function getAccessToken() {
   return res.body.access_token;
 }
 
+// 상품 목록 전체 가져오기 (product_code → product_name 매핑)
+async function fetchProductMap(token) {
+  console.log('📦 상품 목록 수집 중...');
+  const productMap = {}; // product_code → name
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore && page <= 50) {
+    const res = await request({
+      hostname: 'api.cre.ma',
+      path: `/v1/products?access_token=${token}&limit=100&page=${page}`,
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
+    const data = res.body;
+    if (!Array.isArray(data) || data.length === 0) {
+      hasMore = false;
+    } else {
+      data.forEach(p => {
+        if (p.code) productMap[String(p.code)] = p.name;
+        if (p.id) productMap[String(p.id)] = p.name;
+      });
+      console.log(`  상품 페이지 ${page}: ${data.length}개 (누적: ${Object.keys(productMap).length}개)`);
+      if (data.length < 100) hasMore = false;
+      page++;
+    }
+  }
+  console.log(`✅ 총 ${Object.keys(productMap).length}개 상품 매핑 완료`);
+  return productMap;
+}
+
 async function fetchReviews(token) {
   console.log('📥 크리마 리뷰 수집 중...');
   const end = new Date();
@@ -51,10 +82,9 @@ async function fetchReviews(token) {
   let hasMore = true;
 
   while (hasMore && page <= 30) {
-    const path = `/v1/reviews?access_token=${token}&limit=100&page=${page}&date_order_desc=1&start_date=${startStr}&end_date=${endStr}`;
     const res = await request({
       hostname: 'api.cre.ma',
-      path,
+      path: `/v1/reviews?access_token=${token}&limit=100&page=${page}&date_order_desc=1&start_date=${startStr}&end_date=${endStr}`,
       method: 'GET',
       headers: { 'Accept': 'application/json' }
     });
@@ -68,11 +98,10 @@ async function fetchReviews(token) {
       page++;
     }
   }
-  console.log(`✅ 총 ${allReviews.length}개 수집 완료`);
+  console.log(`✅ 총 ${allReviews.length}개 리뷰 수집 완료`);
   return allReviews;
 }
 
-// 채널 파싱: 본문 끝 텍스트 기반
 function parseChannel(message) {
   if (!message) return '카페24';
   if (message.includes('스마트스토어에서 작성된 구매평')) return '스마트스토어';
@@ -81,7 +110,6 @@ function parseChannel(message) {
   return '카페24';
 }
 
-// 본문 클렌징: 채널 태그 제거
 function cleanMessage(message) {
   if (!message) return '';
   return message
@@ -92,19 +120,17 @@ function cleanMessage(message) {
     .trim();
 }
 
-// 제품 카테고리 분류
 function getProductCategory(name) {
   if (!name) return '기타';
-  if (name.match(/NMN Daily Routine|스킨 부스터|NMN Daily Regenerator|Daily Regenerator/)) return 'NMN';
+  if (name.match(/NMN Daily Routine|스킨 부스터|Daily Regenerator|NMN 스킨/)) return 'NMN';
   if (name.match(/White repair|마스크|팩|지우개팩/)) return '마스크팩';
-  if (name.match(/에센셜|Essential Regenerator/)) return '에센셜';
+  if (name.match(/에센셜|Essential/)) return '에센셜';
   if (name.match(/어드밴스드|Advanced|SPF/)) return '어드밴스드';
-  if (name.match(/핸드크림|인앤아웃|손티에이징|Hand/)) return '핸드크림 세트';
+  if (name.match(/핸드크림|인앤아웃|손티에이징/)) return '핸드크림 세트';
   if (name.match(/앰플|UV Healer/)) return '앰플';
   return '기타';
 }
 
-// 키워드 추출
 function extractKeywords(text) {
   const map = {
     '흡수 빠름': ['흡수','스며','잔여감 없'],
@@ -128,7 +154,6 @@ function extractKeywords(text) {
   return keywords;
 }
 
-// 감정 분류
 function getSentiment(text, score) {
   const neg = ['불만','별로','최악','실망','환불','불편','아쉽','나쁨'];
   const pos = ['좋아','최고','만족','추천','재구매','완벽','훌륭','감사','대박'];
@@ -137,8 +162,7 @@ function getSentiment(text, score) {
   return '혼합';
 }
 
-// 크리마 → EGA 변환
-function convertReview(r) {
+function convertReview(r, productMap) {
   const rawText = r.message || '';
   const channel = parseChannel(rawText);
   const text = cleanMessage(rawText);
@@ -146,7 +170,11 @@ function convertReview(r) {
   const sentiment = getSentiment(text, score);
   const isNeg = sentiment === '부정';
   const keywords = extractKeywords(text);
-  const productName = r.product_name || `상품코드 ${r.product_code}`;
+
+  // product_code로 상품명 조회
+  const productCode = String(r.product_code || '');
+  const productId = String(r.product_id || '');
+  const productName = productMap[productCode] || productMap[productId] || r.product_name || '';
   const productCategory = getProductCategory(productName);
 
   return {
@@ -169,7 +197,6 @@ function convertReview(r) {
   };
 }
 
-// HTML 업데이트
 function updateHTML(newReviews) {
   console.log('📝 HTML 파일 업데이트 중...');
   let html = fs.readFileSync('index.html', 'utf8');
@@ -178,8 +205,6 @@ function updateHTML(newReviews) {
   if (!match) throw new Error('ALL_REVIEWS를 찾을 수 없습니다.');
 
   let existing = JSON.parse(match[1]);
-
-  // 기존 CRM 리뷰 제거 (재수집으로 교체)
   const nonCRM = existing.filter(r => !r.id.startsWith('CRM'));
   console.log(`  기존 비-크리마 리뷰: ${nonCRM.length}개`);
   console.log(`  새 크리마 리뷰: ${newReviews.length}개`);
@@ -187,31 +212,31 @@ function updateHTML(newReviews) {
   const merged = [...newReviews, ...nonCRM].sort((a, b) => b.date.localeCompare(a.date));
   const totalCount = merged.length;
 
-  // ALL_REVIEWS 교체
   html = html.replace(/const ALL_REVIEWS = \[[\s\S]*?\];/, `const ALL_REVIEWS = ${JSON.stringify(merged)};`);
-
-  // 사이드바 숫자 업데이트
   html = html.replace(/(<span class="nav-badge">)\d+(<\/span>)/g, `$1${totalCount}$2`);
   html = html.replace(/(<div class="nav-badge">)\d+(<\/div>)/g, `$1${totalCount}$2`);
 
   fs.writeFileSync('index.html', html, 'utf8');
   console.log(`✅ 총 ${totalCount}개로 업데이트 완료`);
-  return newReviews.length;
 }
 
 async function main() {
   try {
     console.log('🚀 크리마 리뷰 자동 수집 시작\n');
     const token = await getAccessToken();
-    const raw = await fetchReviews(token);
-    const converted = raw.map(convertReview);
 
-    // 채널 분포 확인
+    // 상품 목록 먼저 가져오기
+    const productMap = await fetchProductMap(token);
+
+    // 리뷰 수집
+    const raw = await fetchReviews(token);
+    const converted = raw.map(r => convertReview(r, productMap));
+
+    // 분포 확인
     const chCount = {};
     converted.forEach(r => { chCount[r.channel] = (chCount[r.channel] || 0) + 1; });
     console.log('📊 채널 분포:', JSON.stringify(chCount));
 
-    // 제품 분포 확인
     const catCount = {};
     converted.forEach(r => { catCount[r.product_category] = (catCount[r.product_category] || 0) + 1; });
     console.log('📦 제품 분포:', JSON.stringify(catCount));
