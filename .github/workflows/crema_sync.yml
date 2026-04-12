@@ -1,9 +1,12 @@
-name: 크리마 리뷰 자동 수집
+name: EGA 리뷰 자동 수집 (크리마 + 올리브영)
 on:
   schedule:
     # 평일(월~금) 한국시간 10:00~19:00, 30분 간격
     # KST = UTC+9 → 10:00 KST = 01:00 UTC, 19:00 KST = 10:00 UTC
     - cron: '0,30 1-10 * * 1-5'
+    # 토,일 한국시간 오전 10시 (하루 1회)
+    # 10:00 KST = 01:00 UTC
+    - cron: '0 1 * * 0,6'
   workflow_dispatch:       # 수동 실행 버튼도 활성화
 jobs:
   sync-reviews:
@@ -17,16 +20,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: 크리마 리뷰 수집 스크립트 실행
+      - name: 크리마 리뷰 수집
         env:
           CREMA_APP_ID: ${{ secrets.CREMA_APP_ID }}
           CREMA_SECRET: ${{ secrets.CREMA_SECRET }}
         run: node scripts/fetch_crema.js
+      - name: 올리브영 리뷰 수집
+        run: node scripts/fetch_oliveyoung.js
       - name: 변경사항 커밋 & 푸시
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add index.html
-          git diff --staged --quiet || git commit -m "🔄 크리마 리뷰 자동 업데이트 $(date '+%Y-%m-%d %H:%M')"
+          git diff --staged --quiet || git commit -m "🔄 리뷰 자동 업데이트 $(date '+%Y-%m-%d %H:%M')"
           git pull --rebase origin main
           git push
