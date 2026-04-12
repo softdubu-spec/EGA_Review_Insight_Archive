@@ -1,33 +1,28 @@
 name: 크리마 리뷰 자동 수집
-
 on:
   schedule:
     - cron: '0 15 * * *'  # 매일 한국시간 자정 (UTC 15:00)
   workflow_dispatch:       # 수동 실행 버튼도 활성화
-
 jobs:
   sync-reviews:
     runs-on: ubuntu-latest
-
     steps:
       - name: 레포지토리 체크아웃
         uses: actions/checkout@v4
-
       - name: Node.js 설정
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: 크리마 리뷰 수집 스크립트 실행
         env:
           CREMA_APP_ID: ${{ secrets.CREMA_APP_ID }}
           CREMA_SECRET: ${{ secrets.CREMA_SECRET }}
         run: node scripts/fetch_crema.js
-
       - name: 변경사항 커밋 & 푸시
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          git pull --rebase origin main
           git add index.html
           git diff --staged --quiet || git commit -m "🔄 크리마 리뷰 자동 업데이트 $(date '+%Y-%m-%d')"
           git push
