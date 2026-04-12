@@ -2361,13 +2361,15 @@ function updateWeeklyReport() {
 
   const weekLabel = `${(s.getMonth()+1).toString().padStart(2,'0')}/${s.getDate().toString().padStart(2,'0')} ~ ${(e.getMonth()+1).toString().padStart(2,'0')}/${e.getDate().toString().padStart(2,'0')}`;
   
-  const summaryMap = {
-    '2026-03-23': '카페24 채널 집중 주간. NMN Daily Routine SET 중심으로 22건 수집, 부정 리뷰 0건. "만족" 키워드 9건 반복, 꾸준한 복용·재구매 의향 언급 증가세.',
-    '2026-03-16': '핸드크림 어워즈 세트 올리브영 런칭 효과로 올리브영 채널 리뷰 증가세. "끈적임 없음", "흡수 빠름" 긍정 키워드 반복 등장.',
-    '2026-03-09': 'NMN Daily Routine SET 재구매 리뷰가 두드러지며 스마트스토어 채널 충성 고객 증가 확인. 배송 관련 문의성 언급 주의.',
-    '2026-03-02': '에가 에센셜 리제너레이터 가격 대비 효능 언급 증가. 올리브영 신규 고객 리뷰 비중 상승으로 채널 믹스 개선.',
-  };
-  const summary = summaryMap[weekStart] || '이번 주 리뷰 데이터를 분석하였습니다. 핵심 인사이트를 확인하세요.';
+  // 동적 주간 요약 생성
+  const topChEntry = Object.entries(chCounts).sort((a,b)=>b[1]-a[1])[0];
+  const topProdEntry = topProds[0];
+  const topKwEntry = posKws[0];
+  const summary = `${weekLabel} 총 ${total}건 수집 (전주 대비 ${changeStr}). ` +
+    `채널 1위 ${topChEntry?topChEntry[0]+' '+topChEntry[1]+'건':'없음'}. ` +
+    `긍정 ${posPct}%, 부정 ${negPct}%. ` +
+    `상위 제품: ${topProdEntry?topProdEntry[0]+' '+topProdEntry[1]+'건':'없음'}. ` +
+    `핵심 키워드: ${topKwEntry?'"'+topKwEntry[0]+'" '+topKwEntry[1]+'건':'없음'}.`;
 
   const maxKw = posKws[0]?posKws[0][1]:1;
   const maxProd = topProds[0]?topProds[0][1]:1;
@@ -2591,7 +2593,15 @@ function switchTab(el, tabId) {
   document.getElementById(tabId).classList.add('active');
 }
 
-const MONTHS = ['2025-05','2025-06','2025-07','2025-08','2025-09','2025-10','2025-11','2025-12','2026-01','2026-02','2026-03'];
+// MONTHS를 ALL_REVIEWS 데이터에서 자동 생성
+function getActiveMonths() {
+  const monthSet = new Set();
+  ALL_REVIEWS.forEach(r => {
+    if (r.date && r.date.length >= 7) monthSet.add(r.date.slice(0, 7));
+  });
+  return Array.from(monthSet).sort();
+}
+const MONTHS = getActiveMonths();
 
 function getMonthlyData() {
   return MONTHS.map(m => {
@@ -2636,13 +2646,15 @@ function renderInsightsOverview() {
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:11},padding:10}}},scales:{x:{grid:{display:false},ticks:{font:{size:10},maxRotation:45}},y:{stacked:true,grid:{color:'rgba(0,0,0,.05)'},ticks:{font:{size:10}}}}}
   });
 
-  // Total channel donut
-  const chAll = {스마트스토어:365, 올리브영:268, 카페24:182, '전화·기타':22};
+  // Total channel donut (동적 계산)
+  const chAll = {};
+  ALL_REVIEWS.forEach(r => { const ch = r.channel || '기타'; chAll[ch] = (chAll[ch]||0)+1; });
   destroyChart('total-channel');
   const ctx3 = document.getElementById('chart-total-channel').getContext('2d');
+  const chColors = {'스마트스토어':'#3b6cf0','올리브영':'#10b981','카페24':'#f59e0b','올리브영 (매장)':'#34d399','전화':'#9ca3af','카카오':'#fee500','기타':'#9ca3af'};
   chartInstances['total-channel'] = new Chart(ctx3, {
     type:'doughnut',
-    data:{labels:Object.keys(chAll),datasets:[{data:Object.values(chAll),backgroundColor:['#3b6cf0','#10b981','#f59e0b','#9ca3af'],borderWidth:2,borderColor:'#fff'}]},
+    data:{labels:Object.keys(chAll),datasets:[{data:Object.values(chAll),backgroundColor:Object.keys(chAll).map(k=>chColors[k]||'#9ca3af'),borderWidth:2,borderColor:'#fff'}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{font:{size:11},padding:8}}}}
   });
 
@@ -2656,14 +2668,30 @@ function renderInsightsOverview() {
     options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{font:{size:11},padding:8}}}}
   });
 
-  // Insights cards
+  // Insights cards (동적 생성)
+  const totalR = ALL_REVIEWS.length;
+  const repurchaseCount = ALL_REVIEWS.filter(r=>r.has_repurchase).length;
+  const posRate = totalR ? (ALL_REVIEWS.filter(r=>r.sentiment==='긍정').length / totalR * 100).toFixed(1) : 0;
+  const negRate = totalR ? (ALL_REVIEWS.filter(r=>r.sentiment==='부정').length / totalR * 100).toFixed(1) : 0;
+  const allKwCounts = {};
+  ALL_REVIEWS.forEach(r=>r.keywords.forEach(k=>{ allKwCounts[k]=(allKwCounts[k]||0)+1; }));
+  const topKw = Object.entries(allKwCounts).sort((a,b)=>b[1]-a[1]);
+  const topKwName = topKw[0]?topKw[0][0]:'없음';
+  const topKwCount = topKw[0]?topKw[0][1]:0;
+  const negKwTop = topKw.filter(([k])=>['건조함','배송 관련','가격 언급'].includes(k));
+  const negKwName = negKwTop[0]?negKwTop[0][0]:'없음';
+  const negKwCount = negKwTop[0]?negKwTop[0][1]:0;
+  const topReprodProd = {};
+  ALL_REVIEWS.filter(r=>r.has_repurchase).forEach(r=>{ topReprodProd[r.product_category]=(topReprodProd[r.product_category]||0)+1; });
+  const topReprodName = Object.entries(topReprodProd).sort((a,b)=>b[1]-a[1])[0];
+
   document.getElementById('insights-cards').innerHTML = [
-    {icon:'📈', text:'재구매 언급 리뷰 총 47건 — 핵심 충성 고객 지표'},
-    {icon:'🌟', text:'긍정 리뷰 비율 69.2% — 전체 채널 평균'},
-    {icon:'💬', text:'가장 많이 언급된 키워드: "향기" 143회'},
-    {icon:'🎯', text:'올리브영 채널 성장세 — 2026년 월평균 증가'},
-    {icon:'⚠️', text:'부정 리뷰 주요 원인: 가격 언급 83건'},
-    {icon:'♻️', text:'재구매 고객 상위 제품: NMN Daily Routine SET'},
+    {icon:'📈', text:`재구매 언급 리뷰 총 ${repurchaseCount}건 — 핵심 충성 고객 지표`},
+    {icon:'🌟', text:`긍정 리뷰 비율 ${posRate}% — 전체 채널 평균`},
+    {icon:'💬', text:`가장 많이 언급된 키워드: "${topKwName}" ${topKwCount}회`},
+    {icon:'📊', text:`전체 리뷰 ${totalR}건 수집 완료 — 크리마 + 올리브영`},
+    {icon:'⚠️', text:`부정 리뷰 주요 원인: ${negKwName} ${negKwCount}건 (부정률 ${negRate}%)`},
+    {icon:'♻️', text:`재구매 고객 상위 제품: ${topReprodName?topReprodName[0]:'없음'} (${topReprodName?topReprodName[1]:0}건)`},
   ].map(c=>`<div class="insight-item" style="margin-bottom:6px"><div class="insight-dot"></div><div class="insight-text">${c.icon} ${c.text}</div></div>`).join('');
 }
 
@@ -2800,15 +2828,22 @@ function renderInsightsChannels() {
 
 // ===== ADMIN =====
 function initAdmin() {
+  // 키워드 사전 (동적 카운트)
+  const adminKwCounts = {};
+  ALL_REVIEWS.forEach(r=>r.keywords.forEach(k=>{ adminKwCounts[k]=(adminKwCounts[k]||0)+1; }));
   const kwDict = [
-    {label:'흡수 빠름', expressions:'"흡수 빨라요", "금방 스며들어요", "겉돌지 않아요"', type:'긍정', count:62},
-    {label:'끈적임 없음', expressions:'"안 끈적여요", "산뜻해요", "미끌거리지 않아요"', type:'긍정', count:122},
-    {label:'보습력', expressions:'"촉촉해요", "수분감", "건조하지 않아요"', type:'긍정', count:97},
-    {label:'효과 체감', expressions:'"효과 있어요", "좋아진 것 같아요", "피부가 달라졌어요"', type:'긍정', count:95},
-    {label:'가격 언급', expressions:'"비싸요", "가격이", "할인할 때"', type:'혼합', count:83},
-    {label:'건조함', expressions:'"건조해요", "수분이 부족", "당기는 느낌"', type:'부정', count:51},
-    {label:'배송 관련', expressions:'"배송", "늦게 왔어요", "포장 파손"', type:'주의', count:26},
-    {label:'재구매 의향', expressions:'"또 샀어요", "N번째 구매", "계속 쓸 거예요"', type:'긍정', count:47},
+    {label:'흡수 빠름', expressions:'"흡수 빨라요", "금방 스며들어요", "겉돌지 않아요"', type:'긍정', count:adminKwCounts['흡수 빠름']||0},
+    {label:'끈적임 없음', expressions:'"안 끈적여요", "산뜻해요", "미끌거리지 않아요"', type:'긍정', count:adminKwCounts['끈적임 없음']||0},
+    {label:'보습력', expressions:'"촉촉해요", "수분감", "건조하지 않아요"', type:'긍정', count:adminKwCounts['보습력']||0},
+    {label:'효과 체감', expressions:'"효과 있어요", "좋아진 것 같아요", "피부가 달라졌어요"', type:'긍정', count:adminKwCounts['효과 체감']||0},
+    {label:'가격 언급', expressions:'"비싸요", "가격이", "할인할 때"', type:'혼합', count:adminKwCounts['가격 언급']||0},
+    {label:'배송 관련', expressions:'"배송", "늦게 왔어요", "포장 파손"', type:'주의', count:adminKwCounts['배송 관련']||0},
+    {label:'재구매 의향', expressions:'"또 샀어요", "N번째 구매", "계속 쓸 거예요"', type:'긍정', count:adminKwCounts['재구매 의향']||0},
+    {label:'향기', expressions:'"향이 좋아요", "향기가 좋아요", "좋은 향"', type:'긍정', count:adminKwCounts['향기']||0},
+    {label:'선물용', expressions:'"선물했어요", "선물로 드렸어요"', type:'긍정', count:adminKwCounts['선물용']||0},
+    {label:'만족', expressions:'"만족합니다", "만족해요", "좋아요"', type:'긍정', count:adminKwCounts['만족']||0},
+    {label:'피부 개선', expressions:'"피부가 좋아졌어요", "광이 나요", "탄력"', type:'긍정', count:adminKwCounts['피부 개선']||0},
+    {label:'꾸준한 복용', expressions:'"꾸준히 먹어요", "매일 먹어요", "챙겨 먹어요"', type:'긍정', count:adminKwCounts['꾸준한 복용']||0},
   ];
 
   document.getElementById('keyword-dict-table').innerHTML = kwDict.map(k=>`
