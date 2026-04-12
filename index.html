@@ -1079,13 +1079,46 @@
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <select class="filter-select" id="report-week" onchange="updateWeeklyReport()">
-              <option value="2026-03-23" selected="">W13 · 03/23 ~ 03/29</option>
-              <option value="2026-03-16">W12 · 03/16 ~ 03/22</option>
-              <option value="2026-03-09">W11 · 03/09 ~ 03/15</option>
-              <option value="2026-03-02">W10 · 03/02 ~ 03/08</option>
-              <option value="2026-02-23">W09 · 02/23 ~ 03/01</option>
-              <option value="2026-02-16">W08 · 02/16 ~ 02/22</option>
             </select>
+            <script>
+            // 주간 옵션 자동 생성 (ALL_REVIEWS 데이터 기반)
+            (function(){
+              function buildWeekOptions(){
+                const sel = document.getElementById('report-week');
+                if(!sel || typeof ALL_REVIEWS === 'undefined') return;
+                const dates = ALL_REVIEWS.map(r=>r.date).filter(Boolean).sort();
+                if(!dates.length) return;
+                // 가장 최근 날짜의 월요일 찾기
+                const latest = new Date(dates[dates.length-1]);
+                const day = latest.getDay();
+                const lastMon = new Date(latest);
+                lastMon.setDate(latest.getDate() - (day===0?6:day-1));
+                // 가장 오래된 날짜의 월요일
+                const earliest = new Date(dates[0]);
+                const eDay = earliest.getDay();
+                const firstMon = new Date(earliest);
+                firstMon.setDate(earliest.getDate() - (eDay===0?6:eDay-1));
+                // 주간 목록 생성 (최신순)
+                const weeks = [];
+                let cur = new Date(lastMon);
+                let weekNum = Math.ceil((lastMon - new Date(lastMon.getFullYear(),0,1))/(7*86400000));
+                while(cur >= firstMon && weeks.length < 104){
+                  const end = new Date(cur); end.setDate(cur.getDate()+6);
+                  const val = cur.toISOString().slice(0,10);
+                  const label = 'W'+String(weekNum).padStart(2,'0')+' · '
+                    +String(cur.getMonth()+1).padStart(2,'0')+'/'+String(cur.getDate()).padStart(2,'0')
+                    +' ~ '+String(end.getMonth()+1).padStart(2,'0')+'/'+String(end.getDate()).padStart(2,'0');
+                  weeks.push({val,label});
+                  cur.setDate(cur.getDate()-7);
+                  weekNum--;
+                  if(weekNum<1) weekNum=52;
+                }
+                sel.innerHTML = weeks.map((w,i)=>'<option value="'+w.val+'"'+(i===0?' selected':'')+'>'+w.label+'</option>').join('');
+              }
+              if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',buildWeekOptions);
+              else setTimeout(buildWeekOptions, 100);
+            })();
+            </script>
             <button class="btn btn-primary btn-sm" onclick="alert('인쇄 다이얼로그를 통해 PDF로 저장하세요')">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
               PDF 출력
