@@ -1,7 +1,9 @@
 name: 크리마 리뷰 자동 수집
 on:
   schedule:
-    - cron: '0 15 * * *'  # 매일 한국시간 자정 (UTC 15:00)
+    # 평일(월~금) 한국시간 10:00~19:00, 30분 간격
+    # KST = UTC+9 → 10:00 KST = 01:00 UTC, 19:00 KST = 10:00 UTC
+    - cron: '0,30 1-10 * * 1-5'
   workflow_dispatch:       # 수동 실행 버튼도 활성화
 jobs:
   sync-reviews:
@@ -25,8 +27,6 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add index.html
-          git stash
+          git diff --staged --quiet || git commit -m "🔄 크리마 리뷰 자동 업데이트 $(date '+%Y-%m-%d %H:%M')"
           git pull --rebase origin main
-          git stash pop
-          git diff --staged --quiet || git commit -m "🔄 크리마 리뷰 자동 업데이트 $(date '+%Y-%m-%d')"
           git push
