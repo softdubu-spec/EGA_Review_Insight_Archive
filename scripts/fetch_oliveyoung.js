@@ -226,9 +226,10 @@ function extractKeywords(text) {
 }
 
 function getSentiment(text, score) {
-  const neg = ['불만','별로','최악','실망','환불','불편','아쉽','나쁨'];
+  const neg = ['불만','별로','최악','실망','환불','불편','아쉽','나쁨','비싸','모르겠','글쎄','애매','취향 아닌','안 맞','안맞','효과 없','효과없','그냥 그','그저 그','기대에 못','아쉬','후회'];
   const pos = ['좋아','최고','만족','추천','재구매','완벽','훌륭','감사','대박'];
   if (neg.some(w => text.includes(w)) || score <= 2) return '부정';
+  if (score === 3 && !pos.some(w => text.includes(w))) return '부정';
   if (pos.some(w => text.includes(w)) || score >= 4) return '긍정';
   return '혼합';
 }
