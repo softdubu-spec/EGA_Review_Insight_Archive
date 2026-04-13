@@ -1,5 +1,6 @@
 const https = require('https');
 const fs = require('fs');
+const { notifyNegativeReviews } = require('./slack_notify');
 
 const APP_ID = process.env.CREMA_APP_ID;
 const SECRET = process.env.CREMA_SECRET;
@@ -419,6 +420,14 @@ async function main() {
     console.log('제품 분포:', JSON.stringify(catCount));
 
     updateHTML(converted);
+
+    // 부정리뷰 슬랙 DM 알림
+    const negatives = converted.filter(r => r.is_negative);
+    if (negatives.length > 0) {
+      console.log(`\n=== 부정리뷰 ${negatives.length}건 → 슬랙 알림 전송 ===`);
+      await notifyNegativeReviews(negatives);
+    }
+
     console.log('\n========================================');
     console.log('  완료!');
     console.log('========================================');
