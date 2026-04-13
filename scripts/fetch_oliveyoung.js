@@ -1,6 +1,7 @@
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
+const { notifyNegativeReviews } = require('./slack_notify');
 
 // EGA 올리브영 상품 목록 (브랜드 페이지에서 확인)
 const BRAND_URL = 'https://www.oliveyoung.co.kr/store/display/getBrandShopDetail.do?onlBrndCd=A016175';
@@ -368,6 +369,13 @@ async function main() {
     console.log('제품 분포:', JSON.stringify(catCount));
 
     updateHTML(converted);
+
+    // 부정리뷰 슬랙 DM 알림
+    const negatives = converted.filter(r => r.is_negative);
+    if (negatives.length > 0) {
+      console.log(`\n=== 부정리뷰 ${negatives.length}건 → 슬랙 알림 전송 ===`);
+      await notifyNegativeReviews(negatives);
+    }
 
     console.log('\n========================================');
     console.log('  완료!');
