@@ -39,11 +39,28 @@ function slackAPI(method, body) {
   });
 }
 
-// 이메일로 슬랙 사용자 ID 조회
+// 이메일로 슬랙 사용자 ID 조회 (GET 요청)
 async function findUserByEmail(email) {
-  const res = await slackAPI('users.lookupByEmail', { email });
-  if (!res.ok) throw new Error(`사용자 조회 실패 (${email}): ${res.error}`);
-  return res.user.id;
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'slack.com',
+      path: `/api/users.lookupByEmail?email=${encodeURIComponent(email)}`,
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` },
+    }, (res) => {
+      let buf = '';
+      res.on('data', chunk => buf += chunk);
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(buf);
+          if (!data.ok) return reject(new Error(`사용자 조회 실패 (${email}): ${data.error}`));
+          resolve(data.user.id);
+        } catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 // DM 채널 열기
