@@ -24,8 +24,13 @@ jobs:
         env:
           CREMA_APP_ID: ${{ secrets.CREMA_APP_ID }}
           CREMA_SECRET: ${{ secrets.CREMA_SECRET }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_EMAIL: ${{ secrets.SLACK_USER_EMAIL }}
         run: node scripts/fetch_crema.js
       - name: 올리브영 리뷰 수집
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_USER_EMAIL: ${{ secrets.SLACK_USER_EMAIL }}
         run: node scripts/fetch_oliveyoung.js
       - name: 변경사항 커밋 & 푸시
         run: |
