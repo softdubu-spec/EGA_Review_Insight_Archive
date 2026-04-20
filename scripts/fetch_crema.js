@@ -4,6 +4,7 @@ const { notifyNegativeReviews } = require('./slack_notify');
 
 const APP_ID = process.env.CREMA_APP_ID;
 const SECRET = process.env.CREMA_SECRET;
+const HTML_PATH = process.env.HTML_PATH || 'index.html';
 
 function request(options, body = null) {
   return new Promise((resolve, reject) => {
@@ -12,9 +13,17 @@ function request(options, body = null) {
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
-          resolve({ body: JSON.parse(data), headers: res.headers, statusCode: res.statusCode });
+          resolve({
+            body: JSON.parse(data),
+            headers: res.headers,
+            statusCode: res.statusCode
+          });
         } catch (e) {
-          resolve({ body: data, headers: res.headers, statusCode: res.statusCode });
+          resolve({
+            body: data,
+            headers: res.headers,
+            statusCode: res.statusCode
+          });
         }
       });
     });
@@ -24,7 +33,6 @@ function request(options, body = null) {
   });
 }
 
-// Link 헤더에서 next URL 파싱
 function parseLinkHeader(linkHeader) {
   if (!linkHeader) return {};
   const links = {};
@@ -35,7 +43,6 @@ function parseLinkHeader(linkHeader) {
   return links;
 }
 
-// URL에서 path + query 추출
 function extractPath(url) {
   try {
     const u = new URL(url);
@@ -58,25 +65,6 @@ function firstNonEmpty(...vals) {
   for (const v of vals) {
     if (v !== undefined && v !== null && String(v).trim() !== '') {
       return String(v).trim();
-    }
-  }
-  return '';
-}
-
-function pickFirst(obj, paths = []) {
-  for (const path of paths) {
-    const parts = path.split('.');
-    let cur = obj;
-    let ok = true;
-    for (const p of parts) {
-      if (!cur || typeof cur !== 'object' || !(p in cur)) {
-        ok = false;
-        break;
-      }
-      cur = cur[p];
-    }
-    if (ok && cur !== undefined && cur !== null && String(cur).trim() !== '') {
-      return cur;
     }
   }
   return '';
@@ -138,7 +126,6 @@ async function fetchProductMap(token) {
     const data = res.body;
     let items = [];
 
-    // 응답 형식 자동 감지
     if (Array.isArray(data)) {
       items = data;
     } else if (data && typeof data === 'object') {
@@ -505,23 +492,30 @@ function convertReview(r, productMap) {
 }
 
 function updateHTML(newReviews) {
-  console.log('=== HTML 파일 업데이트 중... ===');
-  let html = fs.readFileSync('index.html', 'utf8');
+  console.log(`=== HTML 파일 업데이트 (${HTML_PATH}) ===`);
+  let html = fs.readFileSync(HTML_PATH, 'utf8');
 
   const startMarker = 'const ALL_REVIEWS = ';
-  const startIdx = html.indexOf(startMarker) + startMarker.length;
+  const markerPos = html.indexOf(startMarker);
+  if (markerPos === -1) {
+    throw new Error(`ALL_REVIEWS 블록을 ${HTML_PATH}에서 찾지 못했습니다.`);
+  }
+
+  const startIdx = markerPos + startMarker.length;
 
   let depth = 0;
   let inString = false;
   let i = startIdx;
+
   while (i < html.length) {
     const c = html[i];
     if (c === '\\' && inString) {
       i += 2;
       continue;
     }
-    if (c === '"') inString = !inString;
-    else if (!inString) {
+    if (c === '"') {
+      inString = !inString;
+    } else if (!inString) {
       if (c === '[') depth++;
       else if (c === ']') {
         depth--;
@@ -533,52 +527,55 @@ function updateHTML(newReviews) {
     }
     i++;
   }
-  const endIdx = i;
 
+  const endIdx = i;
   const existingJson = html.slice(startIdx, endIdx);
+
   let existing = [];
   try {
     existing = JSON.parse(existingJson);
   } catch (e) {
-    console.warn('기존 데이터 파싱 실패, 새 데이터만 사용');
+    console.warn('기존 데이터 파싱 실패 → 새 데이터로 덮음');
   }
 
-  // 기존 리뷰를 id 기준으로 맵 구성
-  const existingMap = new Map(existing.map(r => [String(r.id), r]));
+  const map = new Map();
 
-  // 기존 CRM 리뷰 중 product가 비어있던 경우, 새 데이터로 보강 가능하게 merge
+  existing.forEach(r => {
+    map.set(String(r.id), r);
+  });
+
   newReviews.forEach(r => {
     const id = String(r.id);
-    const old = existingMap.get(id);
+    const old = map.get(id);
 
     if (!old) {
-      existingMap.set(id, r);
+      map.set(id, r);
       return;
     }
 
-    const shouldUpgradeProduct =
-      (!old.product || String(old.product).trim() === '') &&
-      r.product &&
-      String(r.product).trim() !== '';
-
     const merged = {
       ...old,
-      ...r
+      ...r,
+      product:
+        r.product && r.product !== '' ? r.product : old.product || '',
+      product_norm:
+        r.product_norm && r.product_norm !== ''
+          ? r.product_norm
+          : old.product_norm || '',
+      product_category:
+        r.product_category && r.product_category !== '기타'
+          ? r.product_category
+          : old.product_category || '기타',
+      sku:
+        r.sku || old.sku || '',
+      memo:
+        r.memo || old.memo || ''
     };
 
-    // 혹시 새 데이터도 비어있으면 예전 값 유지
-    if (!shouldUpgradeProduct && (!r.product || String(r.product).trim() === '')) {
-      merged.product = old.product || '';
-      merged.product_norm = old.product_norm || old.product_norm || '';
-      merged.product_category = old.product_category || r.product_category || '기타';
-      merged.sku = old.sku || r.sku || '';
-      merged.memo = old.memo || r.memo || '';
-    }
-
-    existingMap.set(id, merged);
+    map.set(id, merged);
   });
 
-  const merged = [...existingMap.values()].sort((a, b) => b.date.localeCompare(a.date));
+  const merged = [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
   const totalCount = merged.length;
 
   const newJson = JSON.stringify(merged, null, 0);
@@ -587,8 +584,8 @@ function updateHTML(newReviews) {
   html = html.replace(/(<span class="nav-badge">)\d+(<\/span>)/g, `$1${totalCount}$2`);
   html = html.replace(/(<div class="nav-badge">)\d+(<\/div>)/g, `$1${totalCount}$2`);
 
-  fs.writeFileSync('index.html', html, 'utf8');
-  console.log(`\n=== 총 ${totalCount}개로 업데이트 완료 ===`);
+  fs.writeFileSync(HTML_PATH, html, 'utf8');
+  console.log(`총 ${merged.length}개 리뷰 업데이트 완료`);
 }
 
 async function main() {
@@ -596,6 +593,7 @@ async function main() {
     console.log('========================================');
     console.log('  크리마 전체 리뷰 수집 시작');
     console.log('========================================\n');
+    console.log(`대상 HTML 파일: ${HTML_PATH}`);
 
     if (!APP_ID || !SECRET) {
       throw new Error('CREMA_APP_ID 또는 CREMA_SECRET 환경변수가 설정되지 않았습니다');
