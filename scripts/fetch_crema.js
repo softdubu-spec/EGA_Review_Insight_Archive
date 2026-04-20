@@ -80,6 +80,20 @@ function getNested(obj, path) {
   return cur;
 }
 
+function isMeaningfulProductName(value) {
+  const s = safeString(value);
+  if (!s) return false;
+  if (/^\d+$/.test(s)) return false;
+  if (s.length <= 1) return false;
+  return true;
+}
+
+function normalizeProductName(name) {
+  const s = safeString(name);
+  if (!isMeaningfulProductName(s)) return '';
+  return s;
+}
+
 async function getAccessToken() {
   console.log('=== Access Token 발급 중... ===');
   const body = `grant_type=client_credentials&client_id=${APP_ID}&client_secret=${SECRET}`;
@@ -104,7 +118,7 @@ async function getAccessToken() {
 
 function addProductMapEntry(productMap, key, name) {
   const k = safeString(key);
-  const n = safeString(name);
+  const n = normalizeProductName(name);
   if (!k || !n) return;
   productMap[k] = n;
 }
@@ -141,7 +155,9 @@ async function fetchProductMap(token) {
           p.name,
           p.product_name,
           p.display_name,
-          p.title
+          p.title,
+          getNested(p, 'product.name'),
+          getNested(p, 'reviewable_product.name')
         );
 
         const candidateKeys = uniq([
@@ -411,13 +427,13 @@ function resolveProductInfo(r, productMap) {
     getNested(r, 'reviewable_product.product_name'),
     getNested(r, 'sub_product.name'),
     getNested(r, 'review.product_name')
-  ]).map(String);
+  ]).map(String).filter(isMeaningfulProductName);
 
   let productName = '';
   let matchedKey = '';
 
   for (const key of candidateKeys) {
-    if (productMap[key]) {
+    if (productMap[key] && isMeaningfulProductName(productMap[key])) {
       productName = productMap[key];
       matchedKey = key;
       break;
@@ -439,7 +455,7 @@ function resolveProductInfo(r, productMap) {
   );
 
   return {
-    productName: safeString(productName),
+    productName: normalizeProductName(productName),
     matchedKey: safeString(matchedKey),
     sku: safeString(sku),
     candidateKeys,
@@ -485,9 +501,34 @@ function convertReview(r, productMap) {
     has_repurchase: text.includes('재구매') || text.includes('또 살') || text.includes('쟁여'),
     is_negative: isNeg,
     issue_flag: isNeg && score <= 2,
-    product_norm: productName || resolved.sku || '',
+    product_norm: productName,
     product_category: productCategory,
     sku: resolved.sku || ''
+  };
+}
+
+function mergeReview(old, incoming) {
+  const mergedProduct = isMeaningfulProductName(incoming.product)
+    ? incoming.product
+    : (isMeaningfulProductName(old.product) ? old.product : '');
+
+  const mergedProductNorm = isMeaningfulProductName(incoming.product_norm)
+    ? incoming.product_norm
+    : (isMeaningfulProductName(old.product_norm) ? old.product_norm : mergedProduct);
+
+  const mergedCategory =
+    incoming.product_category && incoming.product_category !== '기타'
+      ? incoming.product_category
+      : (old.product_category || '기타');
+
+  return {
+    ...old,
+    ...incoming,
+    product: mergedProduct,
+    product_norm: mergedProductNorm,
+    product_category: mergedCategory,
+    sku: incoming.sku || old.sku || '',
+    memo: incoming.memo || old.memo || ''
   };
 }
 
@@ -539,40 +580,16 @@ function updateHTML(newReviews) {
   }
 
   const map = new Map();
-
-  existing.forEach(r => {
-    map.set(String(r.id), r);
-  });
+  existing.forEach(r => map.set(String(r.id), r));
 
   newReviews.forEach(r => {
     const id = String(r.id);
     const old = map.get(id);
-
     if (!old) {
       map.set(id, r);
-      return;
+    } else {
+      map.set(id, mergeReview(old, r));
     }
-
-    const merged = {
-      ...old,
-      ...r,
-      product:
-        r.product && r.product !== '' ? r.product : old.product || '',
-      product_norm:
-        r.product_norm && r.product_norm !== ''
-          ? r.product_norm
-          : old.product_norm || '',
-      product_category:
-        r.product_category && r.product_category !== '기타'
-          ? r.product_category
-          : old.product_category || '기타',
-      sku:
-        r.sku || old.sku || '',
-      memo:
-        r.memo || old.memo || ''
-    };
-
-    map.set(id, merged);
   });
 
   const merged = [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
