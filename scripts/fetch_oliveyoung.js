@@ -33,6 +33,45 @@ function fetch(url, options = {}) {
   });
 }
 
+// ─────────────────────────────────────────────────────────
+// ★ 핵심 수정: 개별 상품 상세 페이지에서 정확한 상품명 가져오기
+// ─────────────────────────────────────────────────────────
+async function fetchProductName(goodsNo) {
+  const url = `https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=${goodsNo}`;
+  try {
+    const res = await fetch(url);
+    const html = res.body;
+
+    // 방법 1: og:title (가장 신뢰도 높음)
+    const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
+                 || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
+    if (ogTitle && ogTitle[1].trim() && !ogTitle[1].includes('올리브영')) {
+      return ogTitle[1].replace(/\s*[|｜].*$/, '').trim();
+    }
+
+    // 방법 2: prd_name / goods_name 클래스
+    const prdName = html.match(/class=["'][^"']*prd_name[^"']*["'][^>]*>([\s\S]*?)<\/[a-z]+>/i)
+                 || html.match(/class=["'][^"']*goods_name[^"']*["'][^>]*>([\s\S]*?)<\/[a-z]+>/i)
+                 || html.match(/class=["'][^"']*product[_-]?name[^"']*["'][^>]*>([\s\S]*?)<\/[a-z]+>/i);
+    if (prdName) {
+      const cleaned = prdName[1].replace(/<[^>]+>/g, '').trim();
+      if (cleaned.length > 2) return cleaned;
+    }
+
+    // 방법 3: <title> 태그
+    const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+    if (titleMatch) {
+      const t = titleMatch[1].replace(/\s*[|｜\-].*$/, '').trim();
+      if (t.length > 2 && !t.includes('올리브영')) return t;
+    }
+
+    return '';
+  } catch(e) {
+    console.warn(`  [상품명 조회 실패] goodsNo=${goodsNo}: ${e.message}`);
+    return '';
+  }
+}
+
 async function getProductNumbers() {
   console.log('=== 올리브영 EGA 브랜드 상품 조회 ===');
   try {
@@ -45,23 +84,31 @@ async function getProductNumbers() {
       goodsNos.add(match[1]);
     }
 
-    // 상품명도 추출 시도
+    // 상품명도 추출 시도 (브랜드 페이지 파싱)
     const products = [];
     const prodRegex = /goods_unit[\s\S]*?goodsNo=([A-Z0-9]+)[\s\S]*?<p class="tx_name"[^>]*>([\s\S]*?)<\/p>/g;
     while ((match = prodRegex.exec(res.body)) !== null) {
-      products.push({ goodsNo: match[1], name: match[2].replace(/<[^>]+>/g, '').trim() });
+      const name = match[2].replace(/<[^>]+>/g, '').trim();
+      if (name) products.push({ goodsNo: match[1], name });
     }
 
     if (products.length > 0) {
-      console.log(`  상품 ${products.length}개 발견:`);
+      console.log(`  브랜드 페이지 파싱 성공: ${products.length}개`);
       products.forEach(p => console.log(`    ${p.goodsNo}: ${p.name}`));
       return products;
     }
 
-    // 폴백: goodsNo만 있는 경우
+    // ★ 브랜드 페이지 파싱 실패 시: goodsNo로 개별 상품 페이지에서 상품명 조회
     if (goodsNos.size > 0) {
-      console.log(`  상품번호 ${goodsNos.size}개 발견: ${[...goodsNos].join(', ')}`);
-      return [...goodsNos].map(no => ({ goodsNo: no, name: '' }));
+      console.log(`  상품번호 ${goodsNos.size}개 발견 → 개별 페이지에서 상품명 조회 중...`);
+      const result = [];
+      for (const goodsNo of goodsNos) {
+        const name = await fetchProductName(goodsNo);
+        console.log(`    ${goodsNo}: ${name || '(조회 실패)'}`);
+        result.push({ goodsNo, name });
+        await new Promise(r => setTimeout(r, 300));
+      }
+      return result;
     }
 
     console.log('  [경고] 상품을 찾을 수 없음, 하드코딩된 목록 사용');
@@ -130,27 +177,14 @@ function parseReviews(html, goodsNo, productName) {
   return reviews;
 }
 
-// 대안: JSON API 시도
-async function fetchReviewsJSON(goodsNo, page) {
-  const url = `https://www.oliveyoung.co.kr/store/goods/getGdasNewListJson.do?goodsNo=${goodsNo}&pageIdx=${page}&sortType=NEW&pageSize=10`;
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest',
-        'Accept': 'application/json',
-      }
-    });
-    try {
-      return JSON.parse(res.body);
-    } catch(e) {
-      return null;
-    }
-  } catch(e) {
-    return null;
-  }
-}
-
 async function fetchAllReviewsForProduct(goodsNo, productName) {
+  // ★ productName이 비어있으면 상품 상세 페이지에서 직접 가져옴
+  if (!productName) {
+    console.log(`\n  [${goodsNo}] 상품명 없음 → 상세 페이지에서 조회 중...`);
+    productName = await fetchProductName(goodsNo);
+    console.log(`  → 조회된 상품명: "${productName || '(조회 실패)'}"`);
+  }
+
   console.log(`\n  [${productName || goodsNo}] 리뷰 수집 시작...`);
 
   let allReviews = [];
@@ -349,6 +383,16 @@ async function main() {
       ];
     }
 
+    // ★ name이 빈 상품은 상세 페이지에서 상품명 보완
+    for (const prod of products) {
+      if (!prod.name) {
+        console.log(`  [상품명 보완] ${prod.goodsNo} → 상세 페이지 조회 중...`);
+        prod.name = await fetchProductName(prod.goodsNo);
+        console.log(`  → "${prod.name || '(조회 실패)'}"`);
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
+
     let allRawReviews = [];
     for (const prod of products) {
       const reviews = await fetchAllReviewsForProduct(prod.goodsNo, prod.name);
@@ -368,6 +412,12 @@ async function main() {
     const catCount = {};
     converted.forEach(r => { catCount[r.product_category] = (catCount[r.product_category] || 0) + 1; });
     console.log('제품 분포:', JSON.stringify(catCount));
+
+    // ★ 상품명 없는 리뷰 경고
+    const noName = converted.filter(r => !r.product);
+    if (noName.length > 0) {
+      console.warn(`\n[경고] 상품명 없는 리뷰 ${noName.length}건 (goodsNo 확인 필요)`);
+    }
 
     updateHTML(converted);
 
