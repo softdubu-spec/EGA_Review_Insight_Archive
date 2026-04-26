@@ -3264,7 +3264,7 @@ document.addEventListener('click', function(e) {
 document.addEventListener('keydown', function(e) { if(e.key==='Escape') closeReviewPopup(); });
 
 // ===== REPLY MANAGEMENT =====
-const REPLY_SERVER = 'http://localhost:3001';
+const REPLY_SERVER = 'https://ega-review-insight-archive.onrender.com';
 let replyFilter = 'all';
 let replySearchQuery = '';
 let replyChannelFilter = 'all';
@@ -3274,10 +3274,19 @@ let bulkSelected = new Set();
 let serverOnline = false;
 let replyEditingId = null;
 
+function getCremaReviewId(review) {
+  if (!review) return '';
+  if (review.crema_review_id) return String(review.crema_review_id);
+  if (review.cremaReviewId) return String(review.cremaReviewId);
+  const id = String(review.id || '');
+  const match = id.match(/^CRM(\d+)$/);
+  return match ? match[1] : '';
+}
+
 // ── 서버 상태 체크 ──
 async function checkServerStatus() {
   try {
-    const res = await fetch(REPLY_SERVER + '/health', { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(REPLY_SERVER + '/health', { signal: AbortSignal.timeout(15000) });
     if (res.ok) {
       serverOnline = true;
       document.getElementById('server-dot').className = 'server-dot online';
@@ -3417,6 +3426,19 @@ function buildEGAReplyPrompt(review) {
   ].join('\n');
 }
 async function callOpenAIReply(review) {
+  // 1순위: Render 서버에서 생성 (API 키가 브라우저에 노출되지 않음)
+  if (serverOnline) {
+    const res = await fetch(REPLY_SERVER + '/api/generate-reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ review, prompt: buildEGAReplyPrompt(review) })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || data.message || 'AI 생성 실패');
+    return data.reply || data.output_text || data.text || '';
+  }
+
+  // 서버가 잠시 꺼져 있을 때만 브라우저 직접 호출 fallback
   const apiKey = getOpenAIKey();
   if (!apiKey) throw new Error('API 키가 입력되지 않았습니다');
   const res = await fetch('https://api.openai.com/v1/responses', {
@@ -3513,7 +3535,7 @@ function renderReplyList() {
     const statusLabel = r.reply_status === 'posted' ? '게시 완료' : r.reply_status === 'ai_generated' ? 'AI 답변 생성됨' : '미답변';
     const isEditing = replyEditingId === r.id;
     const isSelected = bulkSelected.has(r.id);
-    const canPost = r.reply_status === 'ai_generated' && r.ai_reply && r.crema_review_id;
+    const canPost = r.reply_status === 'ai_generated' && r.ai_reply && getCremaReviewId(r);
     const channelEmoji = r.channel === '스마트스토어' ? '🟢' : '🛒';
 
     return `
@@ -3617,8 +3639,9 @@ async function postSingleReply(id) {
     return;
   }
   const r = ALL_REVIEWS.find(x => x.id === id);
-  if (!r || !r.ai_reply || !r.crema_review_id) {
-    showToast('게시할 수 없는 리뷰입니다', 'error');
+  const cremaReviewId = getCremaReviewId(r);
+  if (!r || !r.ai_reply || !cremaReviewId) {
+    showToast('크리마 리뷰 ID가 없어 게시할 수 없습니다', 'error');
     return;
   }
 
@@ -3632,7 +3655,7 @@ async function postSingleReply(id) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         reviewId: r.id,
-        cremaReviewId: r.crema_review_id,
+        cremaReviewId: cremaReviewId,
         replyText: r.ai_reply,
         channel: r.channel
       })
@@ -3681,10 +3704,11 @@ async function postBulkReplies() {
   const items = [];
   bulkSelected.forEach(id => {
     const r = ALL_REVIEWS.find(x => x.id === id);
-    if (r && r.ai_reply && r.crema_review_id) {
+    const cremaReviewId = getCremaReviewId(r);
+    if (r && r.ai_reply && cremaReviewId) {
       items.push({
         reviewId: r.id,
-        cremaReviewId: r.crema_review_id,
+        cremaReviewId,
         replyText: r.ai_reply,
         channel: r.channel
       });
